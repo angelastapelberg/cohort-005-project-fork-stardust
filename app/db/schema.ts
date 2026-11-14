@@ -242,15 +242,19 @@ export const refunds = sqliteTable(
       .default(RefundStatus.Requested),
     // The learner's own words, in the box on the course page.
     reason: text("reason").notNull(),
-    // Null until someone approves — a declined request refunds nothing.
-    amountRefunded: integer("amount_refunded"),
+    // Refund Amount: what the learner paid, fixed when the request is raised.
+    // Paid back in full if Approved; a Declined request returns nothing.
+    refundAmount: integer("refund_amount").notNull(),
+    // The admin's explanation, shown to the learner. Set only when Declined.
+    declineReason: text("decline_reason"),
     requestedAt: text("requested_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
     resolvedAt: text("resolved_at"),
     resolvedByUserId: integer("resolved_by_user_id").references(() => users.id),
   },
-  (table) => [index("refunds_purchase_idx").on(table.purchaseId)]
+  // A purchase can have at most one refund request, so a Declined one is final.
+  (table) => [uniqueIndex("refunds_purchase_idx").on(table.purchaseId)]
 );
 
 export const teams = sqliteTable("teams", {
