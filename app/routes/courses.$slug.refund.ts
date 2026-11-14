@@ -16,7 +16,6 @@ import {
 } from "~/db/schema";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
-import { getDiscountForCountry } from "~/lib/ppp";
 import { formatPrice } from "~/lib/utils";
 
 const REFUND_WINDOW_DAYS = 14;
@@ -58,16 +57,13 @@ function getLessonIdsForCourse(courseId: number): number[] {
   return rows.map((row) => row.id);
 }
 
-function getOpenRefund(purchaseId: number) {
+// A purchase can have at most one refund request, whatever its status, so a
+// Declined request is final.
+function getExistingRefundRequest(purchaseId: number) {
   return db
     .select()
     .from(refunds)
-    .where(
-      and(
-        eq(refunds.purchaseId, purchaseId),
-        eq(refunds.status, RefundStatus.Requested)
-      )
-    )
+    .where(eq(refunds.purchaseId, purchaseId))
     .get();
 }
 
@@ -141,8 +137,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("You have not bought this course.", { status: 403 });
   }
 
-  if (getOpenRefund(purchase.id)) {
-    throw data("You already have a request open on this purchase.", {
+  if (getExistingRefundRequest(purchase.id)) {
+    throw data("You have already requested a refund for this purchase.", {
       status: 409,
     });
   }
@@ -200,10 +196,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     });
   }
 
-  // A purchase made at a purchasing-power price is given back at that price,
-  // not at the list price of the course.
-  const pppDiscount = getDiscountForCountry(purchase.country);
-  const refundableAmount = pppDiscount > 0 ? purchase.amountPaid : course.price;
+  // The Refund Amount is what the learner actually paid, never the list price.
+  const refundAmount = purchase.amountPaid;
 
   const formData = await request.formData();
   const parsed = parseFormData(formData, refundActionSchema);
@@ -218,6 +212,7 @@ export async function action({ params, request }: Route.ActionArgs) {
       purchaseId: purchase.id,
       status: RefundStatus.Requested,
       reason: parsed.data.reason,
+      refundAmount,
     })
     .returning()
     .get();
@@ -226,7 +221,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     learnerName: learner.name,
     learnerEmail: learner.email,
     courseTitle: course.title,
-    amount: refundableAmount,
+    amount: refundAmount,
   });
 
   console.log(
